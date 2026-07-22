@@ -1,0 +1,30 @@
+{
+  "device": "pc",
+  "model": "Ornith-35B-MoE",
+  "memory": {
+    "lru_cache_mb": 2048.0,
+    "hot_store_experts": 0,
+    "hot_store_mb": 0.0,
+    "total_cache_mb": 2048
+  },
+  "quantization": {
+    "routed_experts": "int8",
+    "non_routed": "int8",
+    "router": "fp16",
+    "kv_cache": "fp16"
+  },
+  "routing": {
+    "power_law_exponent": 1.5,
+    "n_active_experts": 8
+  },
+  "performance": {
+    "expected_hit_rate": 0.9997714285714285,
+    "expected_decode_tps": 83.33333333333333,
+    "expected_ttft_ms": 1536.039626186362
+  },
+  "hardware": {
+    "gpu_bandwidth_gbs": 250,
+    "ssd_bandwidth_gbs": 3.0,
+    "ram_gb": 16
+  }
+}

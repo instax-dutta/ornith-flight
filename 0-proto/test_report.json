@@ -1,0 +1,222 @@
+{
+  "timestamp": "2026-07-23 02:52:36",
+  "tests_run": [
+    "cache_hit_rates",
+    "power_law_distribution",
+    "hotstore_effectiveness",
+    "prefetch_strategies",
+    "quantization_tradeoff"
+  ],
+  "results": {
+    "cache_hit_rates": [
+      {
+        "config": "int4 2048MB",
+        "experts": 33,
+        "coverage": 0.4603794642857143,
+        "hit_rate": 0.03766785714285714,
+        "hits": 42188,
+        "misses": 1077812,
+        "evictions": 1077779
+      },
+      {
+        "config": "int4 4096MB",
+        "experts": 66,
+        "coverage": 0.9207589285714286,
+        "hit_rate": 0.03766785714285714,
+        "hits": 42188,
+        "misses": 1077812,
+        "evictions": 1077746
+      },
+      {
+        "config": "int4 6144MB",
+        "experts": 99,
+        "coverage": 1.3811383928571428,
+        "hit_rate": 0.03766785714285714,
+        "hits": 42188,
+        "misses": 1077812,
+        "evictions": 1077713
+      },
+      {
+        "config": "int8 4096MB",
+        "experts": 33,
+        "coverage": 0.4603794642857143,
+        "hit_rate": 0.03766785714285714,
+        "hits": 42188,
+        "misses": 1077812,
+        "evictions": 1077779
+      }
+    ],
+    "power_law_distribution": [
+      {
+        "power": 1.2,
+        "top10_share": 0.03748125,
+        "top50_share": 0.14881785714285714,
+        "hot_experts_80pct": 3119,
+        "coverage_80pct": 43.51283482142857
+      },
+      {
+        "power": 1.5,
+        "top10_share": 0.021704464285714285,
+        "top50_share": 0.08994375,
+        "hot_experts_80pct": 3989,
+        "coverage_80pct": 55.65011160714286
+      },
+      {
+        "power": 1.8,
+        "top10_share": 0.01475982142857143,
+        "top50_share": 0.06211071428571428,
+        "hot_experts_80pct": 4451,
+        "coverage_80pct": 62.09542410714286
+      },
+      {
+        "power": 2.0,
+        "top10_share": 0.011973214285714285,
+        "top50_share": 0.05074017857142857,
+        "hot_experts_80pct": 4641,
+        "coverage_80pct": 64.74609375
+      },
+      {
+        "power": 2.5,
+        "top10_share": 0.008139285714285713,
+        "top50_share": 0.03535803571428572,
+        "hot_experts_80pct": 4937,
+        "coverage_80pct": 68.87555803571429
+      }
+    ],
+    "hotstore_effectiveness": [
+      {
+        "hot_experts": 0,
+        "hot_mb": 0.0,
+        "lru_mb": 4096.0,
+        "total_hit_rate": 0.03711875,
+        "hot_contribution": 0.0,
+        "lru_hit_rate": 0.03711875
+      },
+      {
+        "hot_experts": 8,
+        "hot_mb": 496.0,
+        "lru_mb": 3600.0,
+        "total_hit_rate": 0.05140267857142857,
+        "hot_contribution": 0.01755357142857143,
+        "lru_hit_rate": 0.03445389606848792
+      },
+      {
+        "hot_experts": 16,
+        "hot_mb": 992.0,
+        "lru_mb": 3104.0,
+        "total_hit_rate": 0.06544375,
+        "hot_contribution": 0.03478482142857143,
+        "lru_hit_rate": 0.0317638276439099
+      },
+      {
+        "hot_experts": 32,
+        "hot_mb": 1984.0,
+        "lru_mb": 2112.0,
+        "total_hit_rate": 0.09099107142857144,
+        "hot_contribution": 0.06584285714285715,
+        "lru_hit_rate": 0.026920753620528818
+      },
+      {
+        "hot_experts": 50,
+        "hot_mb": 3100.0,
+        "lru_mb": 996.0,
+        "total_hit_rate": 0.11236785714285714,
+        "hot_contribution": 0.09024642857142857,
+        "lru_hit_rate": 0.024315846913018045
+      }
+    ],
+    "prefetch_strategies": [
+      {
+        "strategy": "lazy",
+        "total_time_s": 121.35519573333178,
+        "stall_time_s": 119.85519573333178,
+        "load_time_s": 119.85519573333178,
+        "speedup_vs_lazy": 1.0
+      },
+      {
+        "strategy": "eager",
+        "total_time_s": 122.85519573333333,
+        "stall_time_s": 0,
+        "load_time_s": 121.35519573333333,
+        "speedup_vs_lazy": 0.9877905041699871
+      },
+      {
+        "strategy": "lookahead",
+        "total_time_s": 121.35519573333178,
+        "stall_time_s": 119.85519573333178,
+        "load_time_s": 119.85519573333178,
+        "speedup_vs_lazy": 1.0
+      }
+    ],
+    "quantization_tradeoff": [
+      {
+        "cache_mb": 2048,
+        "bits": 4,
+        "experts": 33,
+        "coverage": 0.004603794642857143,
+        "estimated_hit_rate": 0.09207589285714286,
+        "decode_tps": 0.22689874094166984,
+        "quality": 0.98,
+        "effective_tps": 0.22236076612283645
+      },
+      {
+        "cache_mb": 2048,
+        "bits": 8,
+        "experts": 16,
+        "coverage": 0.002232142857142857,
+        "estimated_hit_rate": 0.04464285714285714,
+        "decode_tps": 0.21563332448136494,
+        "quality": 0.995,
+        "effective_tps": 0.21455515785895812
+      },
+      {
+        "cache_mb": 4096,
+        "bits": 4,
+        "experts": 66,
+        "coverage": 0.009207589285714286,
+        "estimated_hit_rate": 0.18415178571428573,
+        "decode_tps": 0.25250632798365036,
+        "quality": 0.98,
+        "effective_tps": 0.24745620142397734
+      },
+      {
+        "cache_mb": 4096,
+        "bits": 8,
+        "experts": 33,
+        "coverage": 0.004603794642857143,
+        "estimated_hit_rate": 0.09207589285714286,
+        "decode_tps": 0.22689874094166984,
+        "quality": 0.995,
+        "effective_tps": 0.22576424723696148
+      },
+      {
+        "cache_mb": 6144,
+        "bits": 4,
+        "experts": 99,
+        "coverage": 0.013811383928571428,
+        "estimated_hit_rate": 0.21905691964285715,
+        "decode_tps": 0.26379238380227715,
+        "quality": 0.98,
+        "effective_tps": 0.2585165361262316
+      },
+      {
+        "cache_mb": 6144,
+        "bits": 8,
+        "experts": 49,
+        "coverage": 0.0068359375,
+        "estimated_hit_rate": 0.13671875,
+        "decode_tps": 0.23863235391861462,
+        "quality": 0.995,
+        "effective_tps": 0.23743919214902154
+      }
+    ]
+  },
+  "recommendations": {
+    "cache_size_m2": "4096 MB (int4 quantization)",
+    "cache_size_pc": "6144 MB (int4 quantization)",
+    "hot_store_experts": "16-32 experts pinned",
+    "power_law_exponent": "1.5 (realistic distribution)",
+    "prefetch_strategy": "lookahead (1-layer advance)",
+    "quantization": "int4 for routed experts, int8 for non-routed"
+  }
+}
