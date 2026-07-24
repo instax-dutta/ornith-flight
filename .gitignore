@@ -75,5 +75,11 @@ config_*_optimized.json
 # Test reports
 test_report.json
 
+# C build artifacts (1-golden)
+1-golden/ornith
+1-golden/build/
+*.o
+*.a
+
 # Logs
 *.log

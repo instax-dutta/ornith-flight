@@ -1,0 +1,3 @@
+Ornith-flight runs 35B parameter AI models on consumer hardware. No cloud, no 70GB GPUs — it streams experts from disk to run on your MacBook Air or gaming PC. Real benchmarks, open source, shipping now.
+
+ornith-flight — large models, any hardware.
