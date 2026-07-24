@@ -77,9 +77,14 @@ test_report.json
 
 # C build artifacts (1-golden)
 1-golden/ornith
+1-golden/ornith_*
 1-golden/build/
+1-golden/*.o
 *.o
 *.a
+
+# Brag/launch video assets (removed from repo)
+brag-output/
 
 # Logs
 *.log
