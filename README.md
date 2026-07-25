@@ -1,306 +1,122 @@
 # ornith-flight
 
-**Run large MoE language models on consumer hardware through intelligent expert streaming.**
+**Expert-streaming inference engine for Ornith 1.0 35B MoE — runs on consumer hardware.**
 
 [![C 99](https://img.shields.io/badge/C-99-blue.svg)](https://en.wikipedia.org/wiki/C99)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Tests](https://img.shields.io/badge/tests-47%2F47-passing-green)]()
 
-> **Inspired by [Colibri](https://github.com/OpenBMB/MiniCPM)'s expert streaming for GLM-5.2.**
-> Our goal: prove that large MoE inference is feasible on the weakest consumer hardware (8 GB MacBook Air M2) and release the engine as an open-source foundation for the community to build upon.
+> **Inspired by [Colibri's](https://github.com/OpenBMB/MiniCPM) expert streaming for GLM-5.2.**  
+> Goal: run Ornith 1.0 35B — a 256-expert MoE — on a $999 MacBook Air M2 with 8 GB RAM.
 
 ---
 
-## The Breakthrough
+## The Model: Ornith 1.0 35B
 
-Large Mixture-of-Experts (MoE) models like Qwen2-57B-A14B are powerful but locked behind expensive infrastructure. Our engine proves they can run on a **$999 MacBook Air M2 with 8 GB RAM**:
+| Spec | Value |
+|------|-------|
+| **Architecture** | qwen35moe (MoE) |
+| **Parameters** | ~35B total, ~3.7B active per token |
+| **Layers** | 40 |
+| **Hidden dim** | 2048 |
+| **Attention heads** | 16 Q heads × 256 dim → 2 KV heads (GQA) |
+| **Attention type** | Hybrid — full attention every 4th layer, SSM (Mamba-style) for the rest |
+| **Experts** | 256 per layer, 8 active per token |
+| **Expert hidden dim** | 512 (gated SiLU MLP) |
+| **Vocab** | 248,320 tokens (BPE) |
+| **Context** | 262,144 tokens |
+| **Quantization** | Q4_K_M (gate/up), Q6_K (down) — **20 GB file** |
+| **Source** | [`deepreinforce-ai/Ornith-1.0-35B-GGUF`](https://huggingface.co/deepreinforce-ai/Ornith-1.0-35B-GGUF) |
 
-| Metric | Naive Approach | With Ornith-Flight |
-|--------|---------------|-------------------|
-| **Memory required** | 32+ GB (Q4) | **~5.6 GB** (80% less) |
-| **Hardware needed** | Cloud GPU ($) | **MacBook Air M2 (8 GB)** |
-| **Experts loaded** | All 256/layer | **66 of 7,168** (hot-store + LRU) |
-| **Inference engine** | — | **C99, 47/47 tests passing** |
-
-### Real Hardware Results (MacBook Air M2, 8 GB)
-
-> **Note:** Two distinct performance regimes below. The ~4,500 tok/s is for the tiny test model (D=64, all weights in RAM).
-> The 0.13–0.15 tok/s projections are for the full 28-layer model with expert offloading from 1.71 GB/s SSD.
-> The engine is the same — the difference is entirely the I/O bottleneck.
-
-```
-Tiny test model (D=64, 2 layers, all weights in RAM):
-  CPU inference:    ~4,500 tok/s  (real attention + MoE + residuals)
-  Metal backend:    Compiles and runs (same pipeline on GPU)
-
-Full model projection (Qwen2-57B-A14B, 28 layers, 1.71 GB/s SSD):
-  Projected speed:  0.13–0.15 tok/s  (bottlenecked by expert loading from SSD)
-
-SSD benchmark (fio 1M seq read):  1.71 GB/s
-Test suite:                        47/47 passing
-```
+The model has a hybrid architecture:
+- **Every 4th layer** (blk.3, 7, 11, …): standard full attention with QKV projections
+- **Other layers**: SSM-based (Mamba-style with conv1d + gating + state-space model)
+- **All layers**: 256 MoE experts with shared expert + top-8 routing
 
 ---
 
-## How It Works
+## The Problem
 
-### Three-Tier Memory Hierarchy
+Ornith 1.0 35B has **10,240 experts** (256 × 40 layers). At Q4_K_M quantization:
+- **All experts on disk**: ~18 GB  
+- **Non-routed weights (always needed)**: ~2 GB  
+- **One expert**: ~1.75 MB  
 
-Instead of loading all experts into RAM, the engine streams them from SSD on demand:
+To load everything into RAM: **~20 GB required**. An 8 GB MacBook Air cannot fit it.
 
-```
-┌──────────────────────────────────────────────┐
-│ T0: RESIDENT (1.5 GB)                       │ ← Embeddings, attention, norms,
-│     Always loaded, never evicted             │   shared experts, LM head
-├──────────────────────────────────────────────┤
-│ T1: HOT-STORE (3.1 GB, pinned)              │ ← Top 50 most-used experts
-│     Never evicted — 11% hit rate             │
-├──────────────────────────────────────────────┤
-│ T2: LRU CACHE (1.0 GB, dynamic)             │ ← Recently used experts
-│     Evicted when full — 16 experts           │
-├──────────────────────────────────────────────┤
-│ T3: SSD (16+ GB)                             │ ← All 7,168 experts
-│     Streamed on demand at 1.71 GB/s          │
-└──────────────────────────────────────────────┘
-```
+## The Solution — Expert Streaming
 
-### Expert Offloading Pipeline
+Instead of loading all experts, the engine keeps a small cache in RAM and streams the rest from SSD on demand:
 
 ```
-┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│ Router   │───→│ Hot      │───→│ LRU      │───→│ SSD      │
-│ predicts │    │ Store Hit│    │ Cache Hit│    │ Fetch    │
-│ experts  │    │ (0.1 μs) │    │ (0.5 μs) │    │ (36 ms)  │
-└──────────┘    └──────────┘    └──────────┘    └──────────┘
-     │               │               │               │
-     ▼               ▼               ▼               ▼
-     └─────────── Load expert weights ────────────────┘
-                              │
-                              ▼
-                    ┌─────────────────────┐
-                    │  Execute 8 experts  │
-                    │  (attention + MLP)  │
-                    └─────────────────────┘
+┌────────────────────────────────────────────┐
+│ T0: RESIDENT (~2 GB)                      │ ← Embeddings, attention, SSM,
+│     Always loaded, never evicted           │   shared experts, LM head
+├────────────────────────────────────────────┤
+│ T1: HOT-STORE (pinned experts)            │ ← Most-used experts (never evicted)
+│     Size configurable (e.g., 50 experts)  │
+├────────────────────────────────────────────┤
+│ T2: LRU CACHE (dynamic)                   │ ← Recently used experts
+│     Evicted when full                     │
+├────────────────────────────────────────────┤
+│ T3: SSD (~18 GB)                          │ ← All 10,240 experts
+│     Streamed on demand at 1.71 GB/s       │
+└────────────────────────────────────────────┘
 ```
 
-### Key Insight: SSD Bandwidth Is the Bottleneck
-
-Our `fio` benchmark on the actual M2 hardware measured **1.71 GB/s** sequential read — **43% slower** than the 3.0 GB/s commonly assumed. This means:
-
-| Scenario | Hit Rate | Bandwidth Used | Decode TPS |
-|----------|----------|---------------|------------|
-| Cold start | 3.5% | 1.65 GB/s | **0.13** |
-| 16 hot experts | 6.5% | 1.60 GB/s | **0.13** |
-| 50 hot experts | 11.2% | 1.52 GB/s | **0.15** |
-| Optimistic target | 90% | 0.17 GB/s | **0.50** |
-| Stretch goal | 95% | 0.09 GB/s | **2.00** |
-
-> **Bottom line:** At the physical 1.71 GB/s SSD limit, the engine can sustain **0.13–0.15 tok/s** with the three-tier cache. The path to 2+ tok/s requires per-layer caching, expert pruning, or faster storage.
-
----
-
-## Project Structure
+### Expert Loading Pipeline
 
 ```
-ornith-flight/
-├── 0-proto/              Python prototype — parameter optimization & tuning
-│   ├── model/
-│   │   ├── layers.py     MoE, attention, router implementations
-│   │   └── config.py     Qwen2MoE architecture configuration
-│   ├── bench/            Routing profile & throughput simulation
-│   ├── streaming/        LRU cache & prefetch strategy simulation
-│   ├── tuner.py          Cache size, hot-store, quantization tuning
-│   ├── test_suite.py     Comprehensive validation (5 test categories)
-│   ├── config_m2_final.json   Optimized config for M2 (8GB)
-│   └── config_pc_final.json   Optimized config for PC (16GB)
-│
-├── 1-golden/             C inference engine — the core deliverable
-│   ├── src/
-│   │   ├── cli.c         CLI argument parsing
-│   │   ├── main.c        Entry point, model loading, inference loop
-│   │   ├── model.c       Forward pass (attention, MoE, residuals)
-│   │   ├── inference.c   KV cache, prefill, decode, timing
-│   │   ├── gguf.c        GGUF file parser (mmap'd)
-│   │   ├── gpu.c         CPU-fallback GPU abstraction
-│   │   ├── gpu_metal.m   Metal GPU backend (MPS + MSL shaders)
-│   │   ├── memory.c      Tiered LRU cache + hot-store
-│   │   ├── tokenizer.c   BPE vocabulary management
-│   │   └── metal/        Metal shader source files
-│   │       ├── quant.metal     int4/int8 dequant + quantized matmul
-│   │       ├── attention.metal Scaled dot-product attention, DeltaNet
-│   │       ├── mlp.metal       SiLU, expert MLP, router, top-k softmax
-│   │       └── norm.metal      RMSNorm, RoPE
-│   ├── test/
-│   │   ├── t_cli.c       7 tests — argument parsing
-│   │   ├── t_gguf.c      9 tests — GGUF header/metadata/tensors
-│   │   ├── t_gpu.c       7 tests — buffer lifecycle, copy, matmul
-│   │   ├── t_inference.c 6 tests — KV cache, prefill, decode, timing
-│   │   ├── t_memory.c    6 tests — LRU eviction, hot-store, stats
-│   │   ├── t_model.c     5 tests — config, routing, sampling
-│   │   ├── t_tokenizer.c 7 tests — encode/decode, special tokens
-│   │   └── test_runner.c Test framework
-│   ├── docs/
-│   │   └── architecture.md Detailed system design
-│   └── Makefile          Build targets: all, metal, test, clean
-│
-├── STATUS.md             Current project status
-└── Makefile
+Token → Router predicts 8 experts
+         │
+         ├── Hot-store hit?  → Use immediately (~0.1 µs)
+         ├── LRU cache hit?  → Use immediately (~0.5 µs)
+         └── SSD miss?       → Load ~1.75 MB from SSD (~1 ms)
+                               Then dequantize + run expert MLP
 ```
 
 ---
 
-## Getting Started
+## Hardware Reality (MacBook Air M2, 8 GB)
 
-### Build the C Inference Engine
+| Resource | Available | Ornith-35B Requirement |
+|----------|-----------|----------------------|
+| **RAM** | 8 GB | ~2 GB resident + expert cache |
+| **SSD** | 1.71 GB/s (measured) | ~18 GB model file fits |
+| **Disk free** | 45 GB | 20 GB model file ✅ |
 
-```bash
-cd 1-golden
-
-# CPU-fallback backend (works everywhere)
-make
-./ornith --model model.gguf -p "Hello" -n 100
-
-# Metal GPU backend (macOS, requires Xcode)
-make metal
-./ornith_metal --model model.gguf -p "Hello" -n 100
-```
-
-### Run All Tests
-
-```bash
-cd 1-golden && make test          # 47 tests — should all pass
-```
-
-### Test with a Small Model
-
-```bash
-# Generate a tiny Qwen2MoE GGUF file
-python3 /tmp/create_tiny_gguf.py /tmp/tiny_model.gguf
-
-# Run inference
-./ornith --model /tmp/tiny_model.gguf -p "Hello world" -n 32
-
-# Benchmark mode (3 iterations)
-./ornith --model /tmp/tiny_model.gguf -b -n 10
-```
-
-### Run the Python Prototype
-
-```bash
-cd 0-proto
-
-# Full test suite
-python3 test_suite.py --test all
-
-# Optimize for your hardware
-python3 tune_parameters.py --device m2 --component all
-
-# Validate a configuration
-python3 verify.py --config config_m2_final.json
-```
-
----
-
-## Engine Architecture
-
-### Forward Pass Pipeline
+### Measured SSD Bandwidth
 
 ```
-Token Embedding
-    │
-    ▼
-┌───────────────── Layer Loop ─────────────────┐
-│                                              │
-│  RMSNorm → QKV Proj → RoPE → Attention      │
-│     (GQA: 20 Q heads → 4 KV heads)          │
-│         ↓                                    │
-│  Residual + Attention Output                 │
-│         ↓                                    │
-│  RMSNorm → Router (top-8 softmax)            │
-│         ↓                                    │
-│  Shared Expert (1) + Routed Experts (8)      │
-│         ↓                                    │
-│  Residual + FFN Output                       │
-│                                              │
-└──────────────────────────────────────────────┘
-    │
-    ▼
-Final RMSNorm → LM Head → Logits → Sample
-```
-
-### Inference Pipeline (Real Timing from M2)
-
-```
-Prefill:  [Token 0] [Token 1] ... [Token N]      1.6 ms for 7 tokens
-            ↓
-Decode:   [Token N+1] [Token N+2] ... [Token N+M]  3.5 ms for 16 tokens
-            ↓
-Stats:    Prefill=1.6ms  TTFT=1.6ms  Decode=3.5ms  Throughput=4,541 tok/s
-```
-
----
-
-## Benchmark Your Hardware
-
-Before running the full model, benchmark your SSD to understand the bottleneck:
-
-```bash
-# Install fio
-brew install fio
-
-# Sequential read benchmark (1M blocks, 4G file)
 fio --name=seq_read --rw=read --bs=1M --size=4G
+  → 1,632 MiB/s = 1.71 GB/s
 ```
 
-**Reference measurements:**
-| Machine | Measured Bandwidth |
-|---------|-------------------|
-| MacBook Air M2 (256 GB SSD, 8 GB RAM) | **1.71 GB/s** |
-| MacBook Pro M3 (1 TB SSD, 18 GB RAM) | ~3.5–5.0 GB/s |
-| Desktop NVMe (PCIe 4.0) | ~5.0–7.0 GB/s |
+This is the **critical bottleneck**. Each SSD-expert fetch takes ~1 ms per expert for 8 experts = ~8 ms per token minimum I/O time.
 
 ---
 
-## Performance Model
+## C Inference Engine — Status
 
-### Expected Throughput by SSD Speed
+The engine is written in C99 with 47 unit tests passing. It implements:
 
-| SSD Bandwidth | Cold (3.5%) | Warm 50-hot (11%) | Optimized (90%) |
-|--------------|-------------|-------------------|-----------------|
-| 1.7 GB/s (M2 Air) | 0.13 tok/s | 0.15 tok/s | 0.50 tok/s |
-| 3.5 GB/s (M3 Pro) | 0.27 tok/s | 0.30 tok/s | 1.02 tok/s |
-| 7.0 GB/s (Desktop) | 0.54 tok/s | 0.60 tok/s | 2.04 tok/s |
+| Module | File | Status |
+|--------|------|--------|
+| GGUF v3 parser (mmap'd) | `src/gguf.c` | ✅ Reads header, metadata, tensor info (F32 only) |
+| Forward pass | `src/model.c` | ✅ Attention, MoE routing, expert MLP, residuals, sampling |
+| Inference loop | `src/inference.c` | ✅ KV cache, prefill, decode, timing |
+| Memory manager | `src/memory.c` | ✅ LRU cache, hot-store pinning, stats |
+| Tokenizer (BPE) | `src/tokenizer.c` | ✅ Encode/decode, special tokens |
+| GPU abstraction (CPU) | `src/gpu.c` | ✅ Buffer management, CPU matmul fallback |
+| Metal backend | `src/gpu_metal.m` | ⚠️ Compiles, MSL kernels written, needs Xcode for metallib |
 
-### Memory Budget (M2, 8 GB)
-
-```
-Total RAM: 8 GB
-  OS + System:      2.4 GB (30%)
-  Non-Routed:       1.5 GB (19%)  ← Always resident
-  Hot-Store:        3.1 GB (39%)  ← Top 50 experts
-  LRU Cache:        1.0 GB (12%)  ← 16 experts
-```
-
----
-
-## Project Status
-
-| Phase | Status | What's Built |
-|-------|--------|-------------|
-| **0: Prototype** | ✅ Complete | Python simulation, parameter tuning, test suite |
-| **1a: C Engine** | ✅ Complete | Full forward pass, GGUF parser, memory manager, CLI |
-| **1b: Metal GPU** | ⚠️ Compiles | Metal shaders written, ObjC bridge built, needs Xcode for metallib |
-| **2: Real Model** | 📋 Next | Download pre-converted Qwen2-57B-A14B GGUF, validate end-to-end |
-| **3: CUDA** | 📋 Future | NVIDIA GPU backend |
-| **4: Server** | 📋 Future | OpenAI-compatible HTTP API |
-
-### Current Metric: 47/47 Tests Passing ✅
+### Test Results: 47/47 Passing
 
 ```
 Module            Pass  Fail
-t_cli                7     0  Argument parsing, defaults
-t_gguf               9     0  Header, metadata, tensor info
+t_cli                7     0  CLI argument parsing
+t_gguf               9     0  GGUF header, metadata, tensor info
 t_gpu                7     0  Buffer lifecycle, copy, matmul
 t_inference          6     0  KV cache, prefill, decode, timing
 t_memory             6     0  LRU eviction, hot-store, stats
@@ -311,56 +127,131 @@ Total               47     0
 
 ---
 
-## Roadmap
+## What's Needed to Run Ornith 1.0 35B
 
-### Next Steps
+### 1. Extend GGUF Parser for Quantized Tensors (🏗️ IN PROGRESS)
 
-1. **Download Qwen2-57B-A14B GGUF** (~32 GB Q4_K_M) — validate full-scale end-to-end
-2. **Extend GGUF parser** to handle quantized tensor formats (Q4_K_M, Q8_0, etc.)
-3. **Wire in expert offloading** — actual SSD reads, hot-store + LRU, async prefetch
-4. **Per-layer caching** — each layer has different hot experts; 28 small caches vs 1 global
-5. **Expert pruning** — remove bottom 25% least-used experts for 33% better cache coverage
+The downloaded `ornith-1.0-35b-Q4_K_M.gguf` uses **Q4_K_M** and **Q6_K** quantization block formats. Our parser currently only reads F32 tensors. We need to add dequantization for:
 
-### Future Optimizations
+| Format | Blocks | Used for |
+|--------|--------|---------|
+| **Q4_K** | 4-bit K-quant (super-block) | Expert gate/up weights, attention projections |
+| **Q6_K** | 6-bit K-quant | Expert down weights, some attention QKV |
+| **F32** | 32-bit float | Norms, router weights, biases |
 
-- **RMSNorm kernel** — simd_sum threadgroup reduction (currently O(dim²))
-- **Top-k router** — parallel radix top-k (currently bubble sort O(n²))
-- **2-bit quantization** — 4× more experts in cache at acceptable quality loss
-- **Lookahead prefetch** — predict next layer's experts while GPU computes current
+### 2. Adapt Forward Pass for Ornith's Architecture
+
+The current forward pass was written for a simplified vanilla MoE arch. The real Ornith model needs:
+
+| Feature | Current Engine | Ornith Needs |
+|---------|---------------|--------------|
+| Attention | Standard QKV | Q/K/V with separate norms, **key_length=256 ≠ head_count×head_dim** |
+| SSM layers | Not implemented | Conv1d + gating + state-space recurrence |
+| Hybrid pattern | Sequential layers | Full attention every 4th layer, SSM for others |
+| Expert weight layout | Per-expert tensors | **Fused** gate/up/down_exps.weight with [dim, hidden, n_experts] |
+| Head dim | head_dim = d_model/n_heads | key_length=256 (independent of head_count) |
+
+### 3. Wire in Expert Offloading
+
+The memory manager (hot-store + LRU cache) is built but not connected to the forward pass. Currently the engine reads from mmap'd tensor data. Real offloading requires:
+
+- Load individual experts from the fused weight tensors at the right offset
+- Dequantize on the fly
+- Cache in hot-store / LRU
+- Async prefetch for next layer's experts
 
 ---
 
-## Technical Highlights
+## Getting Started
 
-- **C99** — single translation unit, no external dependencies, 47 unit tests
-- **GGUF v3** — memory-mapped tensor access, architecture-prefixed metadata
-- **Three-tier memory** — hot-store (pinned) + LRU cache (dynamic) + SSD (demand)
-- **GQA attention** — 20 Q heads → 4 KV heads with grouped-query attention
-- **Metal shaders** — 18 kernels for quant, attention, MLP, norm (MSL source)
-- **Test-backed** — every module has independent unit tests, ranked by findings
+### Build & Run Tests
+
+```bash
+cd 1-golden
+make                    # Build CPU-fallback engine
+make test               # Run all 47 tests
+```
+
+### Inspect the Downloaded Model
+
+```bash
+# Show full metadata
+gguf-dump models/ornith-1.0-35b-Q4_K_M.gguf | head -50
+
+# Show tensor list
+gguf-dump models/ornith-1.0-35b-Q4_K_M.gguf | grep -c "blk\."
+
+# File size
+ls -lh models/ornith-1.0-35b-Q4_K_M.gguf
+```
+
+### Try Loading with Current Parser (will fail on quantized tensors)
+
+```bash
+cd 1-golden
+./ornith --model ../models/ornith-1.0-35b-Q4_K_M.gguf --config
+```
+
+### Benchmark Your SSD
+
+```bash
+fio --name=seq_read --rw=read --bs=1M --size=4G
+```
+
+---
+
+## Project Structure
+
+```
+ornith-flight/
+├── models/                ← Downloaded Ornith-1.0-35B GGUF (20 GB)
+├── 0-proto/               Python prototype — param optimization & tuning
+├── 1-golden/              C inference engine
+│   ├── src/
+│   │   ├── model.c        Forward pass (attention, MoE, residuals)
+│   │   ├── inference.c    KV cache, prefill, decode, timing
+│   │   ├── gguf.c         GGUF v3 parser (mmap'd)
+│   │   ├── gpu.c          CPU-fallback GPU abstraction
+│   │   ├── gpu_metal.m    Metal GPU backend
+│   │   ├── memory.c       Tiered LRU cache + hot-store
+│   │   └── metal/         Metal shader source files
+│   ├── test/              47 unit tests
+│   └── Makefile
+├── STATUS.md              Current project status
+└── README.md
+```
+
+---
+
+## Roadmap
+
+| Step | What | Priority |
+|------|------|----------|
+| **1** | Extend GGUF parser: add Q4_K/Q6_K dequantization | 🔴 Critical |
+| **2** | Add SSM layer support (conv1d + state-space) | 🔴 Critical |
+| **3** | Adapt attention for separate key/value lengths + Q/K norms | 🔴 Critical |
+| **4** | Wire expert offloading (hot-store + LRU into forward pass) | 🔴 Critical |
+| **5** | Handle fused expert weight tensors (gate/up/down_exps) | 🟡 High |
+| **6** | Test inference on real Ornith model, measure throughput | 🟡 High |
+| **7** | Async prefetch (overlap I/O with compute) | 🟢 Medium |
+| **8** | Per-layer caching (different hot experts per layer) | 🟢 Medium |
 
 ---
 
 ## Contributing
 
-Key areas for contribution:
+Key areas: CUDA backend, SSM kernel optimization, async I/O prefetch, per-layer caching, server API.
 
-- **CUDA backend** — `gpu_cuda.cu` for NVIDIA GPUs
-- **Real model integration** — download and validate against Qwen2-57B-A14B
-- **Per-layer caching** — 28 independent hot-stores instead of 1 global
-- **HTTP server** — OpenAI-compatible API (`server.c`)
-- **Documentation** — tutorials, benchmarks, deployment guides
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
 ## License
 
-MIT License — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
 
 ---
 
-**🎯 Goal:** Prove that large MoE models can run on the weakest consumer hardware  \
-**📊 Status:** C engine complete (47/47 tests), Metal compiles, ready for real model  \
-**🔗 Repository:** https://github.com/instax-dutta/ornith-flight
+**Model:** [Ornith 1.0 35B](https://huggingface.co/deepreinforce-ai/Ornith-1.0-35B-GGUF)  
+**Engine:** 47/47 tests passing, needs parser extension for Q4_K/Q6_K support  
+**Repo:** https://github.com/instax-dutta/ornith-flight

@@ -8,7 +8,7 @@ A pure C inference engine for Ornith 35B MoE that streams routed experts from SS
 
 | Property | Value |
 |---|---|
-| Base model | Qwen 3.5 MoE |
+| Base model | Ornith 1.0 35B MoE (qwen35moe arch) |
 | Total params | 35B |
 | Active per token | ~3B |
 | Architecture | MoE (256 experts, 8 active + 1 shared per token) |
@@ -152,11 +152,11 @@ src/
 ├── memory.h           # tiered memory + LRU cache interface
 ├── memory.c           # expert cache, hot-store, async prefetch
 ├── model.h            # Ornith 35B forward pass interface
-├── model.c            # Qwen MoE forward pass implementation
+├── model.c            # Ornith MoE forward pass implementation
 ├── inference.h        # prefill + decode loop interface
 ├── inference.c        # token generation loop
 ├── tokenizer.h        # BPE tokenizer interface
-├── tokenizer.c        # Qwen tokenizer (BPE)
+├── tokenizer.c        # BPE tokenizer (GPT-2 style)
 ├── server.c           # HTTP server (OpenAI-compatible API)
 ├── main.c             # CLI entry point (chat, interactive)
 ├── metal/
