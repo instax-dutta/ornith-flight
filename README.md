@@ -2,9 +2,10 @@
 <img src="ornith_flight_logo.png" width="320" alt="ornith-flight — expert-streaming inference engine">
 </p>
 <p align="center">
-<a href="https://github.com/instax-dutta/ornith-flight"><img src="https://img.shields.io/github/v/release/instax-dutta/ornith-flight?color=2ea043&label=release" alt="Latest release"></a>
-<a href="https://github.com/instax-dutta/ornith-flight/actions"><img src="https://img.shields.io/badge/tests-69%2F69-passing-brightgreen" alt="Tests"></a>
-<a href="#"><img src="https://img.shields.io/badge/license-MIT-yellow" alt="License"></a>
+<a href="https://github.com/instax-dutta/ornith-flight"><img src="https://img.shields.io/badge/repo-ornith--flight-2ea043" alt="ornith-flight"></a>
+<a href="#"><img src="https://img.shields.io/badge/tests-69%2F69-passing-brightgreen" alt="Tests 69/69 passing"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow" alt="License MIT"></a>
+<a href="https://github.com/instax-dutta/ornith-flight"><img src="https://img.shields.io/github/stars/instax-dutta/ornith-flight?style=social" alt="Stars"></a>
 </p>
 <p align="center">
 <a href="https://github.com/instax-dutta/ornith-flight"><b>GitHub</b></a> ·
