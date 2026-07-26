@@ -3,7 +3,7 @@
 </p>
 <p align="center">
 <a href="https://github.com/instax-dutta/ornith-flight"><img src="https://img.shields.io/badge/repo-ornith--flight-2ea043" alt="ornith-flight"></a>
-<a href="#"><img src="https://img.shields.io/badge/tests-69%2F69-passing-brightgreen" alt="Tests 69/69 passing"></a>
+<a href="https://github.com/instax-dutta/ornith-flight"><img src="https://img.shields.io/badge/tests-69%2F69-passing-brightgreen" alt="Tests 69/69 passing"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow" alt="License MIT"></a>
 <a href="https://github.com/instax-dutta/ornith-flight"><img src="https://img.shields.io/github/stars/instax-dutta/ornith-flight?style=social" alt="Stars"></a>
 </p>
