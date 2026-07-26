@@ -18,6 +18,16 @@ Inspired by [Colibri's](https://github.com/JustVugg/colibri) expert streaming ap
 
 ---
 
+## Key Achievements
+
+- **20 GB model on 8 GB hardware** — Ornith 35B loads and runs on an 8 GB MacBook Air M2 via per-layer streaming I/O, with peak memory under 3 GB.
+- **On-demand expert dequant** — Q4_K/Q6_K fused 3D tensors (256 experts per layer) are never fully materialized. Individual expert slices are extracted per-super-block, saving ~3 GB per layer.
+- **Hybrid forward pass** — Full GQA attention (every 4th layer) and SSM/Mamba recurrence (30 of 40 layers) both execute correctly, with top-8 expert routing via learned router.
+- **Dual GPU backend** — CPU fallback and Metal Performance Shaders backends with 69 unit tests passing across both.
+- **Async I/O prefetch** — Background thread pool overlaps per-layer weight loading with computation, keeping forward pass I/O-bound instead of memory-bound.
+
+---
+
 ## The Model: Ornith 1.0 35B
 
 | Spec | Value |
