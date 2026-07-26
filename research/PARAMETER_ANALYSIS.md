@@ -244,7 +244,7 @@ Token N decode:
 
 ## References
 
-- Architecture doc: `1-golden/docs/architecture.md`
-- Simulation code: `0-proto/bench/simulate.py`
-- Cache implementation: `0-proto/streaming/lru_cache.py`
-- Parameter tuning: `0-proto/tune_parameters.py`
+- Architecture doc: `engine/docs/architecture.md`
+- Simulation code: `research/bench/simulate.py`
+- Cache implementation: `research/streaming/lru_cache.py`
+- Parameter tuning: `research/tune_parameters.py`

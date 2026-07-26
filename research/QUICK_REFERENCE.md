@@ -209,8 +209,8 @@ fio --name=seq_read --rw=read --bs=1M --size=4G --numjobs=1
 
 **Use these in your C implementation:**
 
-- **M2:** `0-proto/config_m2_final.json`
-- **PC:** `0-proto/config_pc_final.json`
+- **M2:** `research/config_m2_final.json`
+- **PC:** `research/config_pc_final.json`
 
 Both files contain complete specifications including:
 - Memory layout

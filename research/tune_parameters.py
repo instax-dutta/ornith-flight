@@ -75,7 +75,7 @@ def run_comprehensive_tuning(device: str = "m2") -> Dict[str, Any]:
     print_config(config)
 
     # Save to file
-    output_path = f"0-proto/config_{device}_optimized.json"
+    output_path = f"research/config_{device}_optimized.json"
     save_config_to_file(config, output_path)
     print(f"\n  Saved to: {output_path}")
 

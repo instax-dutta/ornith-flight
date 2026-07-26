@@ -416,7 +416,7 @@ def generate_test_report(results: Dict[str, List[Dict[str, Any]]]) -> Dict[str, 
     }
 
     # Save to file
-    output_path = "0-proto/test_report.json"
+    output_path = "research/test_report.json"
     with open(output_path, "w") as f:
         json.dump(report, f, indent=2)
 
