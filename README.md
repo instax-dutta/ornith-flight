@@ -1,5 +1,5 @@
 <p align="center">
-<img src="ornith_flight_logo.png" width="600" alt="ornith-flight — expert-streaming inference engine">
+<img src="ornith_flight_logo.png" width="320" alt="ornith-flight — expert-streaming inference engine">
 </p>
 <p align="center">
 <a href="https://github.com/instax-dutta/ornith-flight"><img src="https://img.shields.io/github/v/release/instax-dutta/ornith-flight?color=2ea043&label=release" alt="Latest release"></a>
