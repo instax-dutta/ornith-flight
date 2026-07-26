@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 struct gpu_context {
     size_t used_memory;
@@ -143,17 +144,45 @@ void gpu_matmul_int4(gpu_context *ctx, gpu_buffer *C,
 void gpu_rmsnorm(gpu_context *ctx, gpu_buffer *out,
                  const gpu_buffer *x, const gpu_buffer *weight,
                  int rows, int dim) {
-    (void)ctx; (void)out; (void)x; (void)weight; (void)rows; (void)dim;
+    (void)rows;
+    if (!ctx || !out || !x || !weight) return;
+    float *xp = (float *)x->cpu_ptr;
+    float *wp = (float *)weight->cpu_ptr;
+    float *op = (float *)out->cpu_ptr;
+    float ss = 0.0f;
+    for (int i = 0; i < dim; i++) ss += xp[i] * xp[i];
+    float inv_rms = 1.0f / sqrtf(ss / (float)dim + 1e-6f);
+    for (int i = 0; i < dim; i++) op[i] = wp[i] * (xp[i] * inv_rms);
 }
 
 void gpu_silu(gpu_context *ctx, gpu_buffer *out,
               const gpu_buffer *x, int n) {
-    (void)ctx; (void)out; (void)x; (void)n;
+    if (!ctx || !out || !x) return;
+    float *xp = (float *)x->cpu_ptr;
+    float *op = (float *)out->cpu_ptr;
+    if (xp == op) {
+        for (int i = 0; i < n; i++) {
+            float v = xp[i];
+            op[i] = v / (1.0f + expf(-v));
+        }
+    } else {
+        for (int i = 0; i < n; i++) {
+            float v = xp[i];
+            op[i] = v / (1.0f + expf(-v));
+        }
+    }
 }
 
 void gpu_silu_mul(gpu_context *ctx, gpu_buffer *out,
                   const gpu_buffer *gate, const gpu_buffer *up, int n) {
-    (void)ctx; (void)out; (void)gate; (void)up; (void)n;
+    if (!ctx || !out || !gate || !up) return;
+    float *gp = (float *)gate->cpu_ptr;
+    float *up_ = (float *)up->cpu_ptr;
+    float *op = (float *)out->cpu_ptr;
+    for (int i = 0; i < n; i++) {
+        float g = gp[i];
+        op[i] = (g / (1.0f + expf(-g))) * up_[i];
+    }
 }
 
 void gpu_rope(gpu_context *ctx, gpu_buffer *Q, gpu_buffer *K,

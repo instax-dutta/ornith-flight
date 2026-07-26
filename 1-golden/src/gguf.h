@@ -24,20 +24,20 @@ typedef struct {
 
 // ── Metadata value ───────────────────────────────────────────────────────────
 typedef enum {
-    GGUF_VALUE_NONE,
-    GGUF_VALUE_UINT8   = 0,
-    GGUF_VALUE_INT8    = 1,
-    GGUF_VALUE_UINT16  = 2,
-    GGUF_VALUE_INT16   = 3,
-    GGUF_VALUE_UINT32  = 4,
-    GGUF_VALUE_INT32   = 5,
-    GGUF_VALUE_UINT64  = 6,
-    GGUF_VALUE_INT64   = 7,
-    GGUF_VALUE_FLOAT32 = 8,
-    GGUF_VALUE_FLOAT64 = 9,
-    GGUF_VALUE_BOOL    = 10,
-    GGUF_VALUE_STRING  = 11,
-    GGUF_VALUE_ARRAY   = 12,
+    GGUF_VALUE_NONE   = 0,
+    GGUF_VALUE_UINT8  = 0,
+    GGUF_VALUE_INT8   = 1,
+    GGUF_VALUE_UINT16 = 2,
+    GGUF_VALUE_INT16  = 3,
+    GGUF_VALUE_UINT32 = 4,
+    GGUF_VALUE_INT32  = 5,
+    GGUF_VALUE_FLOAT32= 6,
+    GGUF_VALUE_BOOL   = 7,
+    GGUF_VALUE_STRING = 8,
+    GGUF_VALUE_ARRAY  = 9,
+    GGUF_VALUE_UINT64 = 10,
+    GGUF_VALUE_INT64  = 11,
+    GGUF_VALUE_FLOAT64= 12,
 } gguf_value_type;
 
 typedef struct {
@@ -61,7 +61,7 @@ typedef struct {
         struct {
             gguf_value_type elem_type;
             size_t          count;
-            const void     *data;
+            const void     *data;  // raw pointer into mmap for scalar arrays
         } array;
     } value;
 } gguf_metadata_value;
@@ -88,6 +88,26 @@ uint64_t gguf_list_tensors(const gguf_model *model,
 const void *gguf_tensor_data(const gguf_model *model, const char *name);
 const void *gguf_tensor_data_from_info(const gguf_model *model,
                                        const gguf_tensor_info *info);
+
+// ── Dequantization API (for quantized tensor types) ────────────────────────
+
+// Dequantize a quantized tensor into a float32 output buffer.
+// The caller must allocate 'output' with at least tensor->n_elems * sizeof(float).
+// Returns true on success, false if the type is not supported.
+bool gguf_dequantize_tensor(const gguf_model *model,
+                            const gguf_tensor_info *tensor,
+                            float *output);
+
+// Dequantize a single expert's slice from a fused 3D quantized tensor.
+// The tensor shape must have the last (fastest-varying) dimension = n_experts.
+// expert_idx selects which expert to extract (0 <= expert_idx < n_experts).
+// output must have room for (tensor->n_elems / n_experts) floats.
+// The output elements are in order: for each (dim0, dim1, ..., dimN-1) combination,
+// the expert's element is extracted from the corresponding block position.
+bool gguf_dequantize_expert_slice(const gguf_model *model,
+                                  const gguf_tensor_info *tensor,
+                                  int expert_idx,
+                                  float *output);
 
 // Convenience: architecture-prefixed parameter lookup
 bool gguf_get_param_u32(const gguf_model *model, const char *param, uint32_t *out);

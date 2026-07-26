@@ -21,7 +21,7 @@ The ornith-flight repository has been properly organized and prepared for open-s
 ### 3. Git Repository
 - ✅ **Initialized** - Git repository ready
 - ✅ **2 commits** - All work committed with proper messages
-- ✅ **Clean history** - Co-authored by Claude Opus 4.8
+- ✅ **Clean history**
 
 ## Repository Structure
 

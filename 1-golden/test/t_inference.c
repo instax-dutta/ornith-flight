@@ -27,7 +27,7 @@ static void write_str(unsigned char *buf, size_t *pos, const char *s) {
     memcpy(buf + *pos, s, len); *pos += len;
 }
 static void write_str_val(unsigned char *buf, size_t *pos, const char *s) {
-    write_u32(buf, pos, 11); write_str(buf, pos, s);
+    write_u32(buf, pos, 8); write_str(buf, pos, s);
 }
 static void write_u32_val(unsigned char *buf, size_t *pos, uint32_t v) {
     write_u32(buf, pos, 4); write_u32(buf, pos, v);
@@ -80,7 +80,7 @@ static ornith_model *load_test_model(void) {
 
     memory_config mem_cfg = memory_config_m2();
     char err[256];
-    ornith_model *model = model_load(path, &mem_cfg, err, sizeof(err));
+    ornith_model *model = model_load(path, &mem_cfg, err, sizeof(err), false, false);
 
     free(path);  // model keeps its own GGUF handle via mmap
     return model;
@@ -92,7 +92,7 @@ static test_result test_inference_init_kv_cache(void) {
     ornith_model *model = load_test_model();
     test_not_null(model, "load model");
 
-    inference_engine *engine = inference_init(model);
+    inference_engine *engine = inference_init(model, NULL);
     test_not_null(engine, "inference_init succeeds");
 
     // KV caches should be allocated per-layer
@@ -110,7 +110,7 @@ static test_result test_inference_reset(void) {
     ornith_model *model = load_test_model();
     test_not_null(model, "load model");
 
-    inference_engine *engine = inference_init(model);
+    inference_engine *engine = inference_init(model, NULL);
     test_not_null(engine, "inference_init");
 
     // Reset should work without error
@@ -152,7 +152,7 @@ static test_result test_inference_prefill(void) {
     ornith_model *model = load_test_model();
     test_not_null(model, "load model");
 
-    inference_engine *engine = inference_init(model);
+    inference_engine *engine = inference_init(model, NULL);
     test_not_null(engine, "inference_init");
 
     // Generate a short response from a prompt
@@ -179,7 +179,7 @@ static test_result test_inference_generate_tokens(void) {
     ornith_model *model = load_test_model();
     test_not_null(model, "load model");
 
-    inference_engine *engine = inference_init(model);
+    inference_engine *engine = inference_init(model, NULL);
     test_not_null(engine, "inference_init");
 
     // Generate from prompt tokens directly
@@ -206,7 +206,7 @@ static test_result test_inference_stats(void) {
     ornith_model *model = load_test_model();
     test_not_null(model, "load model");
 
-    inference_engine *engine = inference_init(model);
+    inference_engine *engine = inference_init(model, NULL);
     test_not_null(engine, "inference_init");
 
     generation_params gp = generation_params_default();

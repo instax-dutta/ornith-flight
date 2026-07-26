@@ -19,6 +19,7 @@ typedef struct {
     bool     benchmark;
     bool     verbose;
     bool     print_config;
+    bool     dry_run;
     char     device[16];
 } cli_args;
 

@@ -7,11 +7,12 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include "gguf.h"
 
 typedef struct tokenizer tokenizer;
 
 tokenizer *tokenizer_create(void);
-tokenizer *tokenizer_create_from_json(const char *json_path);
+tokenizer *tokenizer_create_from_gguf(const gguf_model *gguf);
 void tokenizer_destroy(tokenizer *tok);
 
 int tokenizer_encode(tokenizer *tok, const char *text,

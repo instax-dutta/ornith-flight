@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include "model.h"
 #include "memory.h"
+#include "tokenizer.h"
 
 typedef struct inference_engine inference_engine;
 
@@ -48,7 +49,7 @@ typedef struct {
     char     *text;
 } generation_result;
 
-inference_engine *inference_init(ornith_model *model);
+inference_engine *inference_init(ornith_model *model, tokenizer *tok);
 void inference_destroy(inference_engine *engine);
 
 void inference_reset(inference_engine *engine);

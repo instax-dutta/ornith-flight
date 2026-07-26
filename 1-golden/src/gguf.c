@@ -11,6 +11,80 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 
+// ── fp16 conversion ─────────────────────────────────────────────────────────
+
+static inline float fp16_to_fp32(uint16_t h) {
+    // IEEE 754 half-precision to float
+    if (h == 0) return 0.0f;  // handle zero
+    // For normal-range fp16: sign, exp+112 bias, mant<<13
+    uint32_t u = ((uint32_t)(h & 0x8000) << 16)
+               | ((((uint32_t)(h & 0x7C00) >> 10) + 112) << 23)
+               | ((uint32_t)(h & 0x03FF) << 13);
+    float f;
+    memcpy(&f, &u, sizeof(f));
+    return f;
+}
+
+// ── Q4_K dequantization helper ──────────────────────────────────────────────
+
+// Extract scale (d) and min (m) for sub-block j from packed scales[12] array.
+static inline void get_scale_min_k4(int j, const uint8_t *scales,
+                                     uint8_t *d, uint8_t *m) {
+    if (j < 4) {
+        *d = scales[j] & 63;
+        *m = scales[j + 4] & 63;
+    } else {
+        *d = (scales[j + 4] & 0xF) | ((scales[j - 4] >> 6) << 4);
+        *m = (scales[j + 4] >> 4) | ((scales[j - 0] >> 6) << 4);
+    }
+}
+
+// Dequantize one Q4_K super-block (256 elements → 256 floats)
+static void dequantize_block_q4_K(const block_q4_K *x, float *y) {
+    const uint8_t *q = x->qs;
+    const float d = fp16_to_fp32(x->d);
+    const float min = fp16_to_fp32(x->dmin);
+    int is = 0;
+    for (int j = 0; j < QK_K; j += 64) {
+        uint8_t sc, m;
+        get_scale_min_k4(is + 0, x->scales, &sc, &m);
+        const float d1 = d * (float)sc;
+        const float m1 = min * (float)m;
+        get_scale_min_k4(is + 1, x->scales, &sc, &m);
+        const float d2 = d * (float)sc;
+        const float m2 = min * (float)m;
+        for (int l = 0; l < 32; ++l) *y++ = d1 * (float)(q[l] & 0x0F) - m1;
+        for (int l = 0; l < 32; ++l) *y++ = d2 * (float)(q[l] >> 4) - m2;
+        q += 32;
+        is += 2;
+    }
+}
+
+// Dequantize one Q6_K super-block (256 elements → 256 floats)
+static void dequantize_block_q6_K(const block_q6_K *x, float *y) {
+    const float d = fp16_to_fp32(x->d);
+    const uint8_t *ql = x->ql;
+    const uint8_t *qh = x->qh;
+    const int8_t *sc = x->scales;
+    for (int n = 0; n < QK_K; n += 128) {
+        for (int l = 0; l < 32; ++l) {
+            int is = l / 16;
+            int8_t q1 = (int8_t)((ql[l + 0] & 0x0F) | (((qh[l] >> 0) & 3) << 4)) - 32;
+            int8_t q2 = (int8_t)((ql[l + 32] & 0x0F) | (((qh[l] >> 2) & 3) << 4)) - 32;
+            int8_t q3 = (int8_t)((ql[l + 0] >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
+            int8_t q4 = (int8_t)((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
+            y[l + 0]  = d * (float)sc[is + 0] * (float)q1;
+            y[l + 32] = d * (float)sc[is + 2] * (float)q2;
+            y[l + 64] = d * (float)sc[is + 4] * (float)q3;
+            y[l + 96] = d * (float)sc[is + 6] * (float)q4;
+        }
+        y  += 128;
+        ql += 64;
+        qh += 32;
+        sc += 8;
+    }
+}
+
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
 typedef struct {
@@ -67,6 +141,34 @@ static bool read_metadata_val(const gguf_model *m, size_t *pos,
     memset(out, 0, sizeof(*out));
 
     switch (type) {
+    case 0: { // UINT8
+        uint8_t v;
+        if (!read_at(m, *pos, &v, 1)) return false;
+        *pos += 1;
+        out->type = GGUF_VALUE_UINT8; out->value.uint8 = v;
+        return true;
+    }
+    case 1: { // INT8
+        int8_t v;
+        if (!read_at(m, *pos, &v, 1)) return false;
+        *pos += 1;
+        out->type = GGUF_VALUE_INT8; out->value.int8 = v;
+        return true;
+    }
+    case 2: { // UINT16
+        uint16_t v;
+        if (!read_at(m, *pos, &v, 2)) return false;
+        *pos += 2;
+        out->type = GGUF_VALUE_UINT16; out->value.uint16 = v;
+        return true;
+    }
+    case 3: { // INT16
+        int16_t v;
+        if (!read_at(m, *pos, &v, 2)) return false;
+        *pos += 2;
+        out->type = GGUF_VALUE_INT16; out->value.int16 = v;
+        return true;
+    }
     case 4: { // UINT32
         uint32_t v;
         if (!read_at(m, *pos, &v, 4)) return false;
@@ -74,19 +176,97 @@ static bool read_metadata_val(const gguf_model *m, size_t *pos,
         out->type = GGUF_VALUE_UINT32; out->value.uint32 = v;
         return true;
     }
-    case 8: { // FLOAT32
+    case 5: { // INT32
+        int32_t v;
+        if (!read_at(m, *pos, &v, 4)) return false;
+        *pos += 4;
+        out->type = GGUF_VALUE_INT32; out->value.int32 = v;
+        return true;
+    }
+    case 6: { // FLOAT32
         float v;
         if (!read_at(m, *pos, &v, 4)) return false;
         *pos += 4;
         out->type = GGUF_VALUE_FLOAT32; out->value.float32 = v;
         return true;
     }
-    case 11: { // STRING
+    case 7: { // BOOL
+        uint8_t v;
+        if (!read_at(m, *pos, &v, 1)) return false;
+        *pos += 1;
+        out->type = GGUF_VALUE_BOOL; out->value.boolean = (v != 0);
+        return true;
+    }
+    case 8: { // STRING
         gguf_str s;
         if (!read_str(m, pos, &s)) return false;
         out->type = GGUF_VALUE_STRING;
         out->value.string.data = s.data;
         out->value.string.len = s.len;
+        return true;
+    }
+    case 9: { // ARRAY
+        uint32_t elem_type;
+        if (!read_at(m, *pos, &elem_type, 4)) return false;
+        *pos += 4;
+
+        uint64_t count;
+        if (!read_at(m, *pos, &count, 8)) return false;
+        *pos += 8;
+
+        // Store the raw data start and count
+        size_t data_start = *pos;
+
+        // Skip over the array elements to advance pos
+        bool ok = true;
+        for (uint64_t i = 0; i < count && ok; i++) {
+            switch (elem_type) {
+            case 0: case 1: *pos += 1; break;  // UINT8, INT8
+            case 2: case 3: *pos += 2; break;  // UINT16, INT16
+            case 4: case 5: *pos += 4; break;  // UINT32, INT32
+            case 6: *pos += 4; break;  // FLOAT32
+            case 7: *pos += 1; break;  // BOOL
+            case 8: { // STRING element
+                gguf_str s;
+                ok = read_str(m, pos, &s);
+                break;
+            }
+            case 9: // ARRAY element — skip 4+8 bytes (type + count)
+                *pos += 4 + 8; break;
+            case 10: *pos += 8; break;  // UINT64
+            case 11: *pos += 8; break;  // INT64
+            case 12: *pos += 8; break;  // FLOAT64
+            default: ok = false; break;
+            }
+        }
+
+        if (!ok) return false;
+
+        out->type = GGUF_VALUE_ARRAY;
+        out->value.array.elem_type = (gguf_value_type)elem_type;
+        out->value.array.count = (size_t)count;
+        out->value.array.data = (const uint8_t *)m->mapped + data_start;
+        return true;
+    }
+    case 10: { // UINT64
+        uint64_t v;
+        if (!read_at(m, *pos, &v, 8)) return false;
+        *pos += 8;
+        out->type = GGUF_VALUE_UINT64; out->value.uint64 = v;
+        return true;
+    }
+    case 11: { // INT64
+        int64_t v;
+        if (!read_at(m, *pos, &v, 8)) return false;
+        *pos += 8;
+        out->type = GGUF_VALUE_INT64; out->value.int64 = v;
+        return true;
+    }
+    case 12: { // FLOAT64
+        double v;
+        if (!read_at(m, *pos, &v, 8)) return false;
+        *pos += 8;
+        out->type = GGUF_VALUE_FLOAT64; out->value.float64 = v;
         return true;
     }
     default:
@@ -134,7 +314,11 @@ static bool parse_all(gguf_model *m, char *err, size_t err_sz) {
         for (uint64_t i = 0; i < m->metadata_count; i++) {
             // Key
             gguf_str key;
-            if (!read_str(m, &pos, &key)) { snprintf(err, err_sz, "bad meta key"); return false; }
+            if (!read_str(m, &pos, &key)) {
+                snprintf(err, err_sz, "bad meta key at entry %llu, pos=%zu, mapped=%zu",
+                         (unsigned long long)i, pos, m->mapped_size);
+                return false;
+            }
             m->metadata[i].key = (char *)malloc(key.len + 1);
             memcpy(m->metadata[i].key, key.data, key.len);
             m->metadata[i].key[key.len] = '\0';
@@ -153,7 +337,7 @@ static bool parse_all(gguf_model *m, char *err, size_t err_sz) {
 
             // Capture architecture
             if (strcmp(m->metadata[i].key, "general.architecture") == 0 &&
-                vt == 11) {
+                vt == 8) {
                 size_t alen = m->metadata[i].val.value.string.len;
                 if (alen >= sizeof(m->architecture)) alen = sizeof(m->architecture) - 1;
                 memcpy(m->architecture, m->metadata[i].val.value.string.data, alen);
@@ -203,7 +387,7 @@ static bool parse_all(gguf_model *m, char *err, size_t err_sz) {
 
             t->n_elems = 1;
             for (uint32_t d = 0; d < 4; d++) t->n_elems *= t->dims[d];
-            t->size_bytes = t->n_elems * 4;  // assume F32 for now
+            t->size_bytes = ggml_row_size((ggml_type)t->type, t->n_elems);
         }
 
         // Compute tensor data start (aligned)
@@ -304,6 +488,177 @@ const void *gguf_tensor_data(const gguf_model *m, const char *name) {
 const void *gguf_tensor_data_from_info(const gguf_model *m, const gguf_tensor_info *info) {
     if (!m || !info) return NULL;
     return (const uint8_t *)m->mapped + m->tensor_data_offset + info->offset;
+}
+
+// ── Single-element Q4_K and Q6_K extraction helpers ────────────────────────
+
+// Extract one element at position 'pos' (0-255) from a Q4_K super-block.
+static float dequantize_q4_K_one(const block_q4_K *block, int pos) {
+    int sub = pos / 32;          // which of 8 sub-blocks (0-7)
+    int chunk = pos / 64;        // which 64-element chunk (0-3)
+    int p = pos % 64;            // position within chunk (0-63)
+    int s = p / 32;              // which sub-block within chunk (0 or 1)
+    int sub_pos = p % 32;        // position within sub-block (0-31)
+
+    uint8_t sc, m;
+    get_scale_min_k4(sub, block->scales, &sc, &m);
+
+    float d_val = fp16_to_fp32(block->d) * (float)sc;
+    float min_val = fp16_to_fp32(block->dmin) * (float)m;
+
+    int qs_idx = chunk * 32 + sub_pos;
+    uint8_t q = (s == 0) ? (block->qs[qs_idx] & 0x0F) : (block->qs[qs_idx] >> 4);
+
+    return d_val * (float)q - min_val;
+}
+
+// Extract one element at position 'pos' (0-255) from a Q6_K super-block.
+// Uses the same unpacking pattern as dequantize_block_q6_K.
+static float dequantize_q6_K_one(const block_q6_K *block, int pos) {
+    // Q6_K block: 256 elements, processed in two 128-element passes.
+    // Each pass: ql advances 64, qh advances 32, sc advances 8.
+    // Within pass, 32 positions (l=0..31) with 4 lanes each:
+    //   lane0 (y[l+0]):  ql[l+0] low nibble  | qh[l] bits 0-1, sc[is+0]
+    //   lane1 (y[l+32]): ql[l+32] low nibble | qh[l] bits 2-3, sc[is+2]
+    //   lane2 (y[l+64]): ql[l+0] high nibble | qh[l] bits 4-5, sc[is+4]
+    //   lane3 (y[l+96]): ql[l+32] high nibble| qh[l] bits 6-7, sc[is+6]
+    //   where is = l/16 (0 for first 16 positions, 1 for second 16)
+
+    float d_out = fp16_to_fp32(block->d);
+
+    int pass   = pos / 128;             // 0 or 1
+    int lane   = (pos % 128) / 32;      // 0,1,2,3
+    int l      = pos % 32;              // 0-31
+    int is     = l / 16;                // 0 or 1
+
+    // ql index: pass * 64 + lane_offset(0 for lanes 0,2; 32 for lanes 1,3) + l
+    int ql_off = (lane % 2 == 0) ? l : (32 + l);
+    int ql_idx = pass * 64 + ql_off;
+    int ql_byte = (int)block->ql[ql_idx];
+
+    // qh index: pass * 32 + l
+    int qh_byte = (int)block->qh[pass * 32 + l];
+
+    // Extract 4-bit low part, 2-bit high part
+    int q_val;
+    if (lane < 2) {  // lanes 0,1: use low nibble of ql
+        q_val = (ql_byte & 0x0F) | (((qh_byte >> (lane * 2)) & 3) << 4);
+    } else {  // lanes 2,3: use high nibble of ql
+        q_val = (ql_byte >> 4) | (((qh_byte >> (lane * 2)) & 3) << 4);
+    }
+    q_val -= 32;
+
+    // Scale index: pass * 8 + lane * 2 + is
+    int sc_idx = pass * 8 + lane * 2 + is;
+    int8_t sc_val = block->scales[sc_idx];
+
+    return d_out * (float)sc_val * (float)q_val;
+}
+
+// ── Public dequantization API ───────────────────────────────────────────────
+
+bool gguf_dequantize_tensor(const gguf_model *m,
+                            const gguf_tensor_info *tensor,
+                            float *output) {
+    if (!m || !tensor || !output) return false;
+
+    const void *data = gguf_tensor_data_from_info(m, tensor);
+    if (!data) return false;
+
+    uint64_t n_blocks = tensor->n_elems / QK_K;
+
+    switch (tensor->type) {
+    case GGML_TYPE_F32:
+        memcpy(output, data, tensor->size_bytes);
+        return true;
+    case GGML_TYPE_F16: {
+        const uint16_t *src = (const uint16_t *)data;
+        for (uint64_t i = 0; i < tensor->n_elems; i++) {
+            output[i] = fp16_to_fp32(src[i]);
+        }
+        return true;
+    }
+    case GGML_TYPE_Q4_K:
+        for (uint64_t b = 0; b < n_blocks; b++) {
+            const block_q4_K *block = (const block_q4_K *)data + b;
+            dequantize_block_q4_K(block, output + b * QK_K);
+        }
+        return true;
+    case GGML_TYPE_Q6_K:
+        for (uint64_t b = 0; b < n_blocks; b++) {
+            const block_q6_K *block = (const block_q6_K *)data + b;
+            dequantize_block_q6_K(block, output + b * QK_K);
+        }
+        return true;
+    default:
+        return false;
+    }
+}
+
+// ── Expert slice dequantization ──────────────────────────────────────────────
+
+bool gguf_dequantize_expert_slice(const gguf_model *m,
+                                  const gguf_tensor_info *tensor,
+                                  int expert_idx,
+                                  float *output) {
+    if (!m || !tensor || !output) return false;
+    if (expert_idx < 0) return false;
+
+    // The last (fastest-varying) dimension is the expert dimension
+    uint64_t n_experts = tensor->dims[tensor->n_dims - 1];
+    if ((uint64_t)expert_idx >= n_experts) return false;
+    if (n_experts == 0) return false;
+
+    uint64_t n_elems_per_expert = tensor->n_elems / n_experts;
+
+    const void *data = gguf_tensor_data_from_info(m, tensor);
+    if (!data) return false;
+
+    switch (tensor->type) {
+    case GGML_TYPE_F32: {
+        // Strided: every n_experts-th element belongs to expert_idx
+        const float *src = (const float *)data;
+        for (uint64_t i = 0; i < n_elems_per_expert; i++) {
+            output[i] = src[i * n_experts + expert_idx];
+        }
+        return true;
+    }
+    case GGML_TYPE_F16: {
+        // Strided fp16: every n_experts-th half belongs to expert_idx
+        const uint16_t *src = (const uint16_t *)data;
+        for (uint64_t i = 0; i < n_elems_per_expert; i++) {
+            output[i] = fp16_to_fp32(src[i * n_experts + expert_idx]);
+        }
+        return true;
+    }
+    case GGML_TYPE_Q4_K: {
+        // Q4_K: each 256-element super-block has exactly 1 element per expert
+        // (since n_experts = 256 = QK_K in standard MoE models)
+        for (uint64_t i = 0; i < n_elems_per_expert; i++) {
+            // Linear position in the fused tensor for the i-th element of expert_idx
+            uint64_t linear = i * n_experts + (uint64_t)expert_idx;
+            uint64_t block_idx = linear / QK_K;
+            int pos_in_block = (int)(linear % QK_K);
+
+            const block_q4_K *block = (const block_q4_K *)data + block_idx;
+            output[i] = dequantize_q4_K_one(block, pos_in_block);
+        }
+        return true;
+    }
+    case GGML_TYPE_Q6_K: {
+        for (uint64_t i = 0; i < n_elems_per_expert; i++) {
+            uint64_t linear = i * n_experts + (uint64_t)expert_idx;
+            uint64_t block_idx = linear / QK_K;
+            int pos_in_block = (int)(linear % QK_K);
+
+            const block_q6_K *block = (const block_q6_K *)data + block_idx;
+            output[i] = dequantize_q6_K_one(block, pos_in_block);
+        }
+        return true;
+    }
+    default:
+        return false;
+    }
 }
 
 // ── Architecture-prefixed parameter lookup ───────────────────────────────────

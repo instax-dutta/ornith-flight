@@ -27,8 +27,8 @@ BLD_DIR  = build
 # falls back to runtime MSL compilation via newLibraryWithSource:.
 
 METAL_OBJ = $(BLD_DIR)/gpu_metal.o
-METAL_CFLAGS = -ObjC
-METAL_LDFLAGS = -framework Metal -framework MetalPerformanceShaders
+METAL_CFLAGS = -ObjC -fobjc-arc
+METAL_LDFLAGS = -framework Metal -framework MetalPerformanceShaders -lobjc
 
 # ── Source modules ────────────────────────────────────────────────────────
 
@@ -49,7 +49,7 @@ TARGET   = ornith
 TEST_SRCS = $(wildcard $(TEST_DIR)/t_*.c)
 TEST_BINS = $(TEST_SRCS:$(TEST_DIR)/%.c=$(BLD_DIR)/%)
 
-.PHONY: all metal test clean format
+.PHONY: all metal test test-metal clean format
 
 # ── Default target: CPU-fallback backend ──────────────────────────────────
 
@@ -62,6 +62,23 @@ metal: LDFLAGS += $(METAL_LDFLAGS)
 metal: $(BLD_DIR) $(CORE_OBJS) $(METAL_OBJ)
 	$(CC) $(CFLAGS) -o $(TARGET) $(CORE_OBJS) $(METAL_OBJ) $(LDFLAGS)
 	@echo "  → Built $(TARGET) (Metal backend)"
+
+# ── Metal GPU shader test target ──────────────────────────────────────────
+# Builds and runs t_gpu_metal using the Metal backend directly.
+
+test-metal: CFLAGS += -DMETAL_ENABLED $(METAL_CFLAGS)
+test-metal: LDFLAGS += $(METAL_LDFLAGS)
+test-metal: $(BLD_DIR) $(METAL_OBJ)
+	@echo ""
+	@echo "═══ Building Metal GPU shader test ═══"
+	# Only need: test framework, t_gpu_metal.c, gpu_metal.m, and math lib
+	$(CC) $(CFLAGS) -I$(TEST_DIR) -o $(BLD_DIR)/t_gpu_metal \
+	    $(TEST_DIR)/t_gpu_metal.c $(METAL_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "═══ Running Metal GPU shader test ═══"
+	@$(BLD_DIR)/t_gpu_metal
+	@echo ""
+	@echo "═══ Done ═══"
 
 # Must include all .metal files as dependencies for gpu_metal.m
 METAL_SHADERS = $(wildcard $(SRC_DIR)/metal/*.metal)
@@ -104,7 +121,7 @@ test: LDFLAGS += $(GPU_LDFLAGS)
 test: $(BLD_DIR)/gpu.o $(TEST_BINS)
 	@echo ""
 	@echo "═══════════════════════════════════════════════════════════════"
-	@echo "  Running all tests…"
+	@echo "  Running CPU-backend tests…"
 	@echo "═══════════════════════════════════════════════════════════════"
 	@total=0; passed=0; failed=0; \
 	for t in $(TEST_BINS); do \
@@ -117,8 +134,16 @@ test: $(BLD_DIR)/gpu.o $(TEST_BINS)
 	done; \
 	echo ""; \
 	echo "═══════════════════════════════════════════════════════════════"; \
-	echo "  $$passed/$$total passed, $$failed failed"; \
+	echo "  CPU: $$passed/$$total passed, $$failed failed"; \
 	echo "═══════════════════════════════════════════════════════════════"
+	@if [ $$failed -eq 0 ]; then \
+		echo ""; \
+		echo "═══════════════════════════════════════════════════════════════"; \
+		echo "  Attempting Metal GPU backend tests…"; \
+		echo "═══════════════════════════════════════════════════════════════"; \
+		$(MAKE) test-metal 2>/dev/null || \
+		echo "  → Metal backend not available (requires macOS + Xcode); skipping"; \
+	fi
 
 # Build each test executable — link all core .o files EXCEPT main.o (tests have own main)
 $(BLD_DIR)/t_%: $(TEST_DIR)/t_%.c $(filter-out $(BLD_DIR)/main.o, $(CORE_OBJS)) $(BLD_DIR)/gpu.o | $(BLD_DIR)

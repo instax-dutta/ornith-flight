@@ -41,6 +41,8 @@ cli_args parse_args(int argc, char **argv) {
             args.verbose = true;
         } else if (strcmp(argv[i], "--config") == 0 || strcmp(argv[i], "-c") == 0) {
             args.print_config = true;
+        } else if (strcmp(argv[i], "--dry-run") == 0) {
+            args.dry_run = true;
         } else if (strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) {
             if (i + 1 < argc) {
                 strncpy(args.device, argv[++i], sizeof(args.device) - 1);
@@ -61,6 +63,7 @@ cli_args parse_args(int argc, char **argv) {
             printf("  -b, --benchmark      Run benchmark\n");
             printf("  -v, --verbose        Verbose output\n");
             printf("  -c, --config         Print configuration\n");
+            printf("      --dry-run        Load config and exit without allocating weights\n");
             printf("  -d, --device DEVICE  Target device (m2 or pc)\n");
             printf("  -h, --help           Show this help\n");
             exit(0);
